@@ -37,6 +37,7 @@ const els = {
   emptyState: document.getElementById("emptyState"),
   pdfName: document.getElementById("pdfName"),
   createPdf: document.getElementById("createPdf"),
+  sharePdf: document.getElementById("sharePdf"),
   pdfStatus: document.getElementById("pdfStatus")
 };
 
@@ -379,34 +380,99 @@ async function createPdfFromPages() {
     return;
   }
 
-  if (pages.length === 0) {
-    setNotice("PDFにする画像がありません。画像を選択するか、カメラで撮影してください。");
-    setView("pages");
+  if (!ensurePagesForPdf()) {
     return;
   }
 
   pdfBusy = true;
-  els.createPdf.disabled = true;
+  setPdfButtonsDisabled(true);
   setNotice("");
 
   try {
-    const pdfPages = [];
-
-    for (let index = 0; index < pages.length; index += 1) {
-      const page = pages[index];
-      setPdfStatus(`PDFを作成中... ${index + 1}/${pages.length}`);
-      pdfPages.push(await pageToJpegBytes(page));
-    }
-
-    const pdfBlob = buildPdfBlob(pdfPages);
-    downloadBlob(pdfBlob, normalizePdfName(els.pdfName.value));
-    setPdfStatus("PDFを保存しました。");
+    const { blob, fileName } = await generatePdfBlob();
+    downloadBlob(blob, fileName);
+    setPdfStatus("PDFを保存しました。保存したファイルを共有できます。");
   } catch (error) {
     setPdfStatus("PDFの作成に失敗しました。画像枚数を減らしてもう一度試してください。", true);
   } finally {
     pdfBusy = false;
-    els.createPdf.disabled = false;
+    setPdfButtonsDisabled(false);
   }
+}
+
+async function sharePdfFromPages() {
+  if (pdfBusy) {
+    return;
+  }
+
+  if (!ensurePagesForPdf()) {
+    return;
+  }
+
+  pdfBusy = true;
+  setPdfButtonsDisabled(true);
+  setNotice("");
+
+  try {
+    const { blob, fileName } = await generatePdfBlob();
+
+    if (typeof File === "function") {
+      const file = new File([blob], fileName, { type: "application/pdf" });
+
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: fileName,
+          text: "Book Scan PDFで作成したPDFです。"
+        });
+        setPdfStatus("共有を開きました。");
+        return;
+      }
+    }
+
+    downloadBlob(blob, fileName);
+    setPdfStatus("このブラウザは直接共有に未対応です。保存されたPDFをファイルアプリから共有してください。", true);
+  } catch (error) {
+    if (error.name === "AbortError") {
+      setPdfStatus("共有をキャンセルしました。");
+      return;
+    }
+
+    setPdfStatus("PDFの共有に失敗しました。PDFを作成してからファイルアプリで共有してください。", true);
+  } finally {
+    pdfBusy = false;
+    setPdfButtonsDisabled(false);
+  }
+}
+
+async function generatePdfBlob() {
+  const pdfPages = [];
+
+  for (let index = 0; index < pages.length; index += 1) {
+    const page = pages[index];
+    setPdfStatus(`PDFを作成中... ${index + 1}/${pages.length}`);
+    pdfPages.push(await pageToJpegBytes(page));
+  }
+
+  return {
+    blob: buildPdfBlob(pdfPages),
+    fileName: normalizePdfName(els.pdfName.value)
+  };
+}
+
+function setPdfButtonsDisabled(disabled) {
+  els.createPdf.disabled = disabled;
+  els.sharePdf.disabled = disabled;
+}
+
+function ensurePagesForPdf() {
+  if (pages.length > 0) {
+    return true;
+  }
+
+  setNotice("PDFにする画像がありません。画像を選択するか、カメラで撮影してください。");
+  setView("pages");
+  return false;
 }
 
 async function pageToJpegBytes(page) {
@@ -620,6 +686,7 @@ function bindEvents() {
   els.openPagesFromHome.addEventListener("click", () => setView("pages"));
   els.backHome.addEventListener("click", () => setView("home"));
   els.createPdf.addEventListener("click", createPdfFromPages);
+  els.sharePdf.addEventListener("click", sharePdfFromPages);
 
   window.addEventListener("beforeunload", () => {
     stopCamera();
