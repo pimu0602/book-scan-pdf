@@ -1,0 +1,517 @@
+:root {
+  color-scheme: light;
+  --bg: #f7f7f2;
+  --surface: #ffffff;
+  --surface-strong: #f0f4f3;
+  --text: #17201d;
+  --muted: #66736d;
+  --line: #d8ded9;
+  --primary: #166c5a;
+  --primary-dark: #0f4b40;
+  --secondary: #285577;
+  --danger: #a23a2f;
+  --focus: #e5b94b;
+  --shadow: 0 14px 34px rgba(23, 32, 29, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: var(--bg);
+}
+
+body {
+  min-height: 100%;
+  margin: 0;
+  color: var(--text);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+img,
+video {
+  display: block;
+  max-width: 100%;
+}
+
+.app-shell {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  padding: 18px;
+}
+
+.app-header {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  align-items: center;
+  padding: 20px 0 18px;
+}
+
+.app-kicker {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 6px;
+  font-size: clamp(2rem, 8vw, 4.25rem);
+  line-height: 1.02;
+}
+
+h2 {
+  margin-bottom: 0;
+  font-size: 1.25rem;
+}
+
+.app-lead {
+  max-width: 38rem;
+  margin-bottom: 0;
+  color: var(--muted);
+}
+
+.page-counter {
+  display: inline-flex;
+  width: fit-content;
+  min-width: 118px;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.page-counter span:first-child {
+  font-size: 2rem;
+  font-weight: 800;
+}
+
+.notice {
+  min-height: 0;
+  margin-bottom: 12px;
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.notice:empty {
+  display: none;
+}
+
+.view {
+  display: none;
+  padding: 20px 0 28px;
+}
+
+.view-active {
+  display: block;
+}
+
+.view-heading {
+  margin-bottom: 16px;
+}
+
+.view-heading p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.view-heading-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  align-items: end;
+}
+
+.heading-actions,
+.primary-actions,
+.empty-actions,
+.pdf-controls {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.button,
+.text-button {
+  border: 0;
+  border-radius: 8px;
+  min-height: 48px;
+  padding: 12px 16px;
+  font-weight: 800;
+}
+
+.button-primary {
+  background: var(--primary);
+  color: #fff;
+}
+
+.button-primary:hover {
+  background: var(--primary-dark);
+}
+
+.button-secondary {
+  background: var(--secondary);
+  color: #fff;
+}
+
+.button-secondary:hover {
+  background: #1f4360;
+}
+
+.button-quiet {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.button-capture {
+  min-height: 64px;
+  background: #b94234;
+  color: #fff;
+  font-size: 1.1rem;
+}
+
+.button-capture:hover {
+  background: #983429;
+}
+
+.text-button {
+  width: fit-content;
+  padding-inline: 0;
+  background: transparent;
+  color: var(--secondary);
+  text-decoration: underline;
+}
+
+.button:focus-visible,
+.text-button:focus-visible,
+input:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.home-status,
+.empty-state,
+.pdf-panel {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.home-status p,
+.empty-state p {
+  margin-bottom: 8px;
+}
+
+.warning {
+  margin-top: 16px;
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.device-note {
+  margin-top: 16px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.camera-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.camera-stage {
+  overflow: hidden;
+  border-radius: 8px;
+  background: #0f1714;
+}
+
+#cameraVideo {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  background: #0f1714;
+}
+
+.camera-panel {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.shoot-count {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.shoot-count span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.shoot-count strong {
+  font-size: 1.45rem;
+}
+
+.camera-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.latest-shot {
+  min-height: 172px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.latest-shot p {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+#latestThumb {
+  width: 100%;
+  height: 118px;
+  border-radius: 6px;
+  background: var(--surface-strong);
+  object-fit: contain;
+}
+
+#latestThumb:not([src]) {
+  visibility: hidden;
+}
+
+.strip-wrap {
+  margin-top: 14px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.camera-strip {
+  display: flex;
+  min-height: 76px;
+  gap: 8px;
+}
+
+.strip-thumb {
+  flex: 0 0 58px;
+  width: 58px;
+  height: 74px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  object-fit: cover;
+}
+
+.page-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.page-card {
+  display: grid;
+  grid-template-columns: 112px 1fr;
+  gap: 12px;
+  min-height: 160px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.page-thumb {
+  width: 112px;
+  height: 136px;
+  border-radius: 6px;
+  background: var(--surface-strong);
+  object-fit: contain;
+}
+
+.page-info {
+  display: grid;
+  gap: 10px;
+  align-content: space-between;
+  min-width: 0;
+}
+
+.page-title {
+  margin: 0;
+  font-weight: 800;
+}
+
+.page-size {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.page-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.page-actions button {
+  min-height: 40px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  color: var(--text);
+  font-weight: 800;
+}
+
+.page-actions .delete-page {
+  border-color: rgba(162, 58, 47, 0.32);
+  color: var(--danger);
+}
+
+.empty-state[hidden],
+.page-grid[hidden] {
+  display: none;
+}
+
+.pdf-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.pdf-panel label {
+  font-weight: 800;
+}
+
+#pdfName {
+  min-height: 48px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  color: var(--text);
+}
+
+.pdf-status {
+  min-height: 1.5em;
+  margin-bottom: 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+@media (min-width: 640px) {
+  .app-shell {
+    padding: 24px;
+  }
+
+  .app-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .primary-actions,
+  .empty-actions,
+  .heading-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .view-heading-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .page-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .page-card {
+    grid-template-columns: 1fr;
+  }
+
+  .page-thumb {
+    width: 100%;
+    height: 210px;
+  }
+
+  .pdf-controls {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
+  }
+}
+
+@media (min-width: 920px) {
+  .app-shell {
+    padding: 30px;
+  }
+
+  .camera-layout {
+    grid-template-columns: minmax(0, 1fr) 300px;
+    align-items: start;
+  }
+
+  #cameraVideo {
+    max-height: 72vh;
+    aspect-ratio: 4 / 3;
+  }
+
+  .page-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1180px) {
+  .page-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
