@@ -196,12 +196,23 @@ async function captureCurrentFrame() {
   els.capturePage.disabled = true;
 
   try {
+    const sourceRect = getVisibleVideoSourceRect(els.cameraVideo);
     const canvas = document.createElement("canvas");
-    canvas.width = els.cameraVideo.videoWidth;
-    canvas.height = els.cameraVideo.videoHeight;
+    canvas.width = Math.round(sourceRect.width);
+    canvas.height = Math.round(sourceRect.height);
 
     const context = canvas.getContext("2d");
-    context.drawImage(els.cameraVideo, 0, 0, canvas.width, canvas.height);
+    context.drawImage(
+      els.cameraVideo,
+      sourceRect.x,
+      sourceRect.y,
+      sourceRect.width,
+      sourceRect.height,
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    );
 
     const blob = await canvasToBlob(canvas, "image/jpeg", 0.92);
     const page = await createPageFromBlob(blob);
@@ -216,6 +227,36 @@ async function captureCurrentFrame() {
     captureBusy = false;
     els.capturePage.disabled = false;
   }
+}
+
+function getVisibleVideoSourceRect(video) {
+  const videoWidth = video.videoWidth;
+  const videoHeight = video.videoHeight;
+  const bounds = video.getBoundingClientRect();
+  const displayWidth = bounds.width || video.clientWidth || videoWidth;
+  const displayHeight = bounds.height || video.clientHeight || videoHeight;
+  const videoAspect = videoWidth / videoHeight;
+  const displayAspect = displayWidth / displayHeight;
+
+  if (displayAspect > videoAspect) {
+    const height = videoWidth / displayAspect;
+
+    return {
+      x: 0,
+      y: (videoHeight - height) / 2,
+      width: videoWidth,
+      height
+    };
+  }
+
+  const width = videoHeight * displayAspect;
+
+  return {
+    x: (videoWidth - width) / 2,
+    y: 0,
+    width,
+    height: videoHeight
+  };
 }
 
 function canvasToBlob(canvas, type, quality) {
@@ -541,10 +582,11 @@ function createDocumentCanvas(sourceCanvas) {
     return null;
   }
 
-  const topWidth = distance(quad.topLeft, quad.topRight);
-  const bottomWidth = distance(quad.bottomLeft, quad.bottomRight);
-  const leftHeight = distance(quad.topLeft, quad.bottomLeft);
-  const rightHeight = distance(quad.topRight, quad.bottomRight);
+  const adjustedQuad = insetDocumentQuad(quad);
+  const topWidth = distance(adjustedQuad.topLeft, adjustedQuad.topRight);
+  const bottomWidth = distance(adjustedQuad.bottomLeft, adjustedQuad.bottomRight);
+  const leftHeight = distance(adjustedQuad.topLeft, adjustedQuad.bottomLeft);
+  const rightHeight = distance(adjustedQuad.topRight, adjustedQuad.bottomRight);
   const rawWidth = Math.max(topWidth, bottomWidth);
   const rawHeight = Math.max(leftHeight, rightHeight);
 
@@ -560,10 +602,38 @@ function createDocumentCanvas(sourceCanvas) {
   outputCanvas.width = outputWidth;
   outputCanvas.height = outputHeight;
 
-  warpQuadToCanvas(sourceCanvas, quad, outputCanvas);
+  warpQuadToCanvas(sourceCanvas, adjustedQuad, outputCanvas);
   enhanceDocumentCanvas(outputCanvas);
 
-  return outputCanvas;
+  return trimDocumentBorder(outputCanvas) || outputCanvas;
+}
+
+function insetDocumentQuad(quad) {
+  const left = 0.018;
+  const right = 0.018;
+  const top = 0.045;
+  const bottom = 0.022;
+
+  return {
+    topLeft: pointInQuad(quad, left, top),
+    topRight: pointInQuad(quad, 1 - right, top),
+    bottomRight: pointInQuad(quad, 1 - right, 1 - bottom),
+    bottomLeft: pointInQuad(quad, left, 1 - bottom)
+  };
+}
+
+function pointInQuad(quad, xRatio, yRatio) {
+  const top = interpolatePoint(quad.topLeft, quad.topRight, xRatio);
+  const bottom = interpolatePoint(quad.bottomLeft, quad.bottomRight, xRatio);
+
+  return interpolatePoint(top, bottom, yRatio);
+}
+
+function interpolatePoint(first, second, ratio) {
+  return {
+    x: first.x + (second.x - first.x) * ratio,
+    y: first.y + (second.y - first.y) * ratio
+  };
 }
 
 function detectDocumentQuad(sourceCanvas) {
@@ -795,6 +865,96 @@ function enhanceDocumentCanvas(canvas) {
   }
 
   context.putImageData(imageData, 0, 0);
+}
+
+function trimDocumentBorder(canvas) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const pixels = imageData.data;
+  const maxTrimX = Math.floor(canvas.width * 0.16);
+  const maxTrimY = Math.floor(canvas.height * 0.18);
+  let top = 0;
+  let bottom = canvas.height - 1;
+  let left = 0;
+  let right = canvas.width - 1;
+
+  while (top < maxTrimY && isNoisyRow(pixels, canvas.width, top)) {
+    top += 1;
+  }
+
+  while (bottom > canvas.height - 1 - maxTrimY && isNoisyRow(pixels, canvas.width, bottom)) {
+    bottom -= 1;
+  }
+
+  while (left < maxTrimX && isNoisyColumn(pixels, canvas.width, left, top, bottom)) {
+    left += 1;
+  }
+
+  while (right > canvas.width - 1 - maxTrimX && isNoisyColumn(pixels, canvas.width, right, top, bottom)) {
+    right -= 1;
+  }
+
+  const width = right - left + 1;
+  const height = bottom - top + 1;
+
+  if (width < canvas.width * 0.65 || height < canvas.height * 0.65) {
+    return null;
+  }
+
+  if (left === 0 && top === 0 && width === canvas.width && height === canvas.height) {
+    return canvas;
+  }
+
+  const trimmedCanvas = document.createElement("canvas");
+  const trimmedContext = trimmedCanvas.getContext("2d");
+
+  trimmedCanvas.width = width;
+  trimmedCanvas.height = height;
+  trimmedContext.fillStyle = "#fff";
+  trimmedContext.fillRect(0, 0, width, height);
+  trimmedContext.drawImage(canvas, left, top, width, height, 0, 0, width, height);
+
+  return trimmedCanvas;
+}
+
+function isNoisyRow(pixels, width, y) {
+  let dark = 0;
+  let nonWhite = 0;
+  const start = y * width * 4;
+
+  for (let x = 0; x < width; x += 1) {
+    const value = pixels[start + x * 4];
+
+    if (value < 64) {
+      dark += 1;
+    }
+
+    if (value < 220) {
+      nonWhite += 1;
+    }
+  }
+
+  return dark / width > 0.12 || nonWhite / width > 0.42;
+}
+
+function isNoisyColumn(pixels, width, x, top, bottom) {
+  let dark = 0;
+  let nonWhite = 0;
+  const total = bottom - top + 1;
+
+  for (let y = top; y <= bottom; y += 1) {
+    const value = pixels[(y * width + x) * 4];
+
+    if (value < 64) {
+      dark += 1;
+    }
+
+    if (value < 220) {
+      nonWhite += 1;
+    }
+  }
+
+  return total <= 0 || dark / total > 0.12 || nonWhite / total > 0.42;
 }
 
 function homographyFromRectToQuad(width, height, quad) {
