@@ -9,6 +9,9 @@ let pdfBusy = false;
 const MAX_PDF_IMAGE_SIDE = 2600;
 const MAX_DOCUMENT_IMAGE_SIDE = 1800;
 const DOCUMENT_DETECTION_SIDE = 760;
+const APP_STATE_DB = "book-scan-pdf-state";
+const APP_STATE_STORE = "app";
+const APP_STATE_KEY = "current";
 const PDF_LAYOUTS = {
   standard: {
     margin: 22.68,
@@ -21,6 +24,9 @@ const PDF_LAYOUTS = {
     correction: true
   }
 };
+
+let saveStateTimer = null;
+let restoringState = false;
 
 const els = {
   notice: document.getElementById("notice"),
@@ -104,6 +110,7 @@ async function handleSelectedFiles(fileList) {
     }
     updateCounts();
     setView("pages");
+    scheduleSaveAppState();
   } catch (error) {
     setNotice("画像の読み込みに失敗しました。別の画像を選択してください。");
   }
@@ -221,6 +228,7 @@ async function captureCurrentFrame() {
     captureSessionIds.push(page.id);
     updateCounts();
     renderCameraPanel();
+    scheduleSaveAppState();
   } catch (error) {
     setNotice("撮影画像の保存に失敗しました。もう一度試してください。");
   } finally {
@@ -417,6 +425,7 @@ function movePage(index, direction) {
 
   [pages[index], pages[nextIndex]] = [pages[nextIndex], pages[index]];
   renderPages();
+  scheduleSaveAppState();
 }
 
 function removePageAt(index) {
@@ -428,6 +437,7 @@ function removePageAt(index) {
   }
 
   updateCounts();
+  scheduleSaveAppState();
 }
 
 async function createPdfFromPages() {
@@ -444,6 +454,7 @@ async function createPdfFromPages() {
   setNotice("");
 
   try {
+    await saveAppState();
     const { blob, fileName } = await generatePdfBlob();
     downloadBlob(blob, fileName);
     setPdfStatus("PDFを保存しました。保存したファイルを共有できます。");
@@ -469,6 +480,7 @@ async function sharePdfFromPages() {
   setNotice("");
 
   try {
+    await saveAppState();
     const { blob, fileName } = await generatePdfBlob();
 
     if (typeof File === "function") {
@@ -532,6 +544,173 @@ function ensurePagesForPdf() {
   setNotice("PDFにする画像がありません。画像を選択するか、カメラで撮影してください。");
   setView("pages");
   return false;
+}
+
+function scheduleSaveAppState() {
+  if (restoringState || !window.indexedDB) {
+    return;
+  }
+
+  window.clearTimeout(saveStateTimer);
+  saveStateTimer = window.setTimeout(() => {
+    saveStateTimer = null;
+    void saveAppState();
+  }, 350);
+}
+
+async function saveAppState() {
+  if (restoringState || !window.indexedDB) {
+    return false;
+  }
+
+  window.clearTimeout(saveStateTimer);
+  saveStateTimer = null;
+
+  const state = {
+    version: 1,
+    savedAt: Date.now(),
+    nextPageId,
+    pdfName: els.pdfName.value,
+    pdfLayout: getPdfLayout(),
+    pages: pages.map((page) => ({
+      id: page.id,
+      blob: page.blob,
+      width: page.width,
+      height: page.height
+    }))
+  };
+
+  try {
+    const db = await openAppStateDb();
+
+    try {
+      await idbPut(db, APP_STATE_STORE, APP_STATE_KEY, state);
+      return true;
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    return false;
+  }
+}
+
+async function restoreAppState() {
+  if (!window.indexedDB) {
+    return;
+  }
+
+  restoringState = true;
+
+  try {
+    const db = await openAppStateDb();
+    let state = null;
+
+    try {
+      state = await idbGet(db, APP_STATE_STORE, APP_STATE_KEY);
+    } finally {
+      db.close();
+    }
+
+    if (!state || state.version !== 1) {
+      return;
+    }
+
+    if (typeof state.pdfName === "string") {
+      els.pdfName.value = state.pdfName;
+    }
+
+    setPdfLayout(state.pdfLayout);
+
+    if (!Array.isArray(state.pages) || state.pages.length === 0) {
+      updateCounts();
+      return;
+    }
+
+    pages.forEach((page) => URL.revokeObjectURL(page.url));
+    pages.length = 0;
+
+    let maxId = 0;
+
+    for (const savedPage of state.pages) {
+      if (!savedPage.blob) {
+        continue;
+      }
+
+      const id = Number(savedPage.id) || nextPageId++;
+      const url = URL.createObjectURL(savedPage.blob);
+      const width = Number(savedPage.width) || 0;
+      const height = Number(savedPage.height) || 0;
+
+      pages.push({
+        id,
+        blob: savedPage.blob,
+        url,
+        width,
+        height
+      });
+      maxId = Math.max(maxId, id);
+    }
+
+    nextPageId = Math.max(Number(state.nextPageId) || 1, maxId + 1);
+    updateCounts();
+
+    if (pages.length > 0) {
+      setView("pages");
+      setPdfStatus("前回のページを復元しました。");
+    }
+  } catch (error) {
+    setPdfStatus("前回のページを復元できませんでした。", true);
+  } finally {
+    restoringState = false;
+  }
+}
+
+function openAppStateDb() {
+  return new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(APP_STATE_DB, 1);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+
+      if (!db.objectStoreNames.contains(APP_STATE_STORE)) {
+        db.createObjectStore(APP_STATE_STORE);
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function idbGet(db, storeName, key) {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(storeName, "readonly");
+    const request = transaction.objectStore(storeName).get(key);
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+function idbPut(db, storeName, key, value) {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(storeName, "readwrite");
+
+    transaction.objectStore(storeName).put(value, key);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+}
+
+function setPdfLayout(value) {
+  const layoutName = PDF_LAYOUTS[value] ? value : "standard";
+  const input = document.querySelector(`input[name="pdfLayout"][value="${layoutName}"]`);
+
+  if (input) {
+    input.checked = true;
+  }
 }
 
 async function pageToJpegBytes(page, layout = PDF_LAYOUTS.standard) {
@@ -1305,6 +1484,10 @@ function bindEvents() {
   els.backHome.addEventListener("click", () => setView("home"));
   els.createPdf.addEventListener("click", createPdfFromPages);
   els.sharePdf.addEventListener("click", sharePdfFromPages);
+  els.pdfName.addEventListener("input", scheduleSaveAppState);
+  document.querySelectorAll('input[name="pdfLayout"]').forEach((input) => {
+    input.addEventListener("change", scheduleSaveAppState);
+  });
 
   window.addEventListener("beforeunload", () => {
     stopCamera();
@@ -1315,6 +1498,11 @@ function bindEvents() {
   window.addEventListener("orientationchange", updateCameraAvailability);
 }
 
-bindEvents();
-updateCameraAvailability();
-updateCounts();
+async function initApp() {
+  bindEvents();
+  updateCameraAvailability();
+  updateCounts();
+  await restoreAppState();
+}
+
+void initApp();
