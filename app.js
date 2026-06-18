@@ -8,9 +8,9 @@ let pdfBusy = false;
 
 const MAX_PDF_IMAGE_SIDE = 2600;
 const MAX_DOCUMENT_IMAGE_SIDE = 1800;
-const MAX_AI_PDF_IMAGE_SIDE = 2200;
+const MAX_HIGH_QUALITY_IMAGE_SIDE = 2400;
 const DEFAULT_JPEG_QUALITY = 0.92;
-const AI_JPEG_QUALITY = 0.84;
+const HIGH_QUALITY_JPEG_QUALITY = 0.9;
 const DOCUMENT_DETECTION_SIDE = 760;
 const APP_STATE_DB = "book-scan-pdf-state";
 const APP_STATE_STORE = "app";
@@ -39,11 +39,11 @@ const PDF_LAYOUTS = {
     margin: 18,
     orientation: "portrait",
     correction: true,
-    maxSide: MAX_AI_PDF_IMAGE_SIDE,
-    correctionMaxSide: MAX_AI_PDF_IMAGE_SIDE,
-    enhancement: "ai",
-    jpegQuality: AI_JPEG_QUALITY,
-    statusPrefix: "AI用に補正中"
+    maxSide: MAX_HIGH_QUALITY_IMAGE_SIDE,
+    correctionMaxSide: MAX_HIGH_QUALITY_IMAGE_SIDE,
+    enhancement: "highQuality",
+    jpegQuality: HIGH_QUALITY_JPEG_QUALITY,
+    statusPrefix: "高画質補正中"
   }
 };
 
@@ -831,8 +831,8 @@ async function pageToJpegBytes(page, layout = PDF_LAYOUTS.standard) {
     }
   }
 
-  if (layout.enhancement === "ai") {
-    enhanceAiDocumentCanvas(canvas);
+  if (layout.enhancement === "highQuality") {
+    enhanceHighQualityDocumentCanvas(canvas);
   }
 
   const blob = await canvasToBlob(canvas, "image/jpeg", jpegQuality);
@@ -1116,8 +1116,8 @@ function warpQuadToCanvas(sourceCanvas, quad, outputCanvas) {
 }
 
 function enhanceCanvasForLayout(canvas, layout) {
-  if (layout.enhancement === "ai") {
-    enhanceAiDocumentCanvas(canvas);
+  if (layout.enhancement === "highQuality") {
+    enhanceHighQualityDocumentCanvas(canvas);
     return;
   }
 
@@ -1146,7 +1146,7 @@ function enhanceDocumentCanvas(canvas) {
   context.putImageData(imageData, 0, 0);
 }
 
-function enhanceAiDocumentCanvas(canvas) {
+function enhanceHighQualityDocumentCanvas(canvas) {
   const context = canvas.getContext("2d", { willReadFrequently: true });
   const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
   const pixels = imageData.data;
@@ -1162,28 +1162,33 @@ function enhanceAiDocumentCanvas(canvas) {
   }
 
   const blackPoint = histogramPercentile(histogram, totalPixels, 0.02);
-  const whitePoint = histogramPercentile(histogram, totalPixels, 0.94);
-  const threshold = clamp(otsuThreshold(histogram) + 6, 128, 220);
-  const range = Math.max(48, whitePoint - blackPoint);
+  const whitePoint = histogramPercentile(histogram, totalPixels, 0.98);
+  const range = Math.max(80, whitePoint - blackPoint);
 
   for (let index = 0, pixel = 0; index < pixels.length; index += 4, pixel += 1) {
     const gray = grayValues[pixel];
-    let value = clamp(((gray - blackPoint) * 255) / range, 0, 255);
+    const normalizedGray = clamp(((gray - blackPoint) * 255) / range, 0, 255);
+    let targetGray = gray * 0.42 + normalizedGray * 0.58;
 
-    if (gray >= threshold + 30 || value >= 228) {
-      value = 255;
-    } else if (gray <= threshold - 76 || value <= 64) {
-      value *= 0.55;
-    } else if (gray < threshold) {
-      value *= 0.72;
-    } else {
-      value = value * 1.12 + 10;
+    if (targetGray > 202) {
+      targetGray += (255 - targetGray) * 0.45;
+    } else if (targetGray < 92) {
+      targetGray *= 0.85;
+    } else if (targetGray < 150) {
+      targetGray *= 0.94;
     }
 
-    value = Math.round(clamp(value, 0, 255));
-    pixels[index] = value;
-    pixels[index + 1] = value;
-    pixels[index + 2] = value;
+    targetGray = clamp(targetGray, 0, 255);
+
+    const ratio = gray > 0 ? targetGray / gray : 0;
+    const saturation = targetGray > 210 ? 0.38 : 0.72;
+    const red = pixels[index] * ratio;
+    const green = pixels[index + 1] * ratio;
+    const blue = pixels[index + 2] * ratio;
+
+    pixels[index] = Math.round(clamp(targetGray + (red - targetGray) * saturation, 0, 255));
+    pixels[index + 1] = Math.round(clamp(targetGray + (green - targetGray) * saturation, 0, 255));
+    pixels[index + 2] = Math.round(clamp(targetGray + (blue - targetGray) * saturation, 0, 255));
     pixels[index + 3] = 255;
   }
 
