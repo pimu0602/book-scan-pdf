@@ -7,6 +7,16 @@ let captureBusy = false;
 let pdfBusy = false;
 
 const MAX_PDF_IMAGE_SIDE = 2600;
+const PDF_LAYOUTS = {
+  standard: {
+    margin: 22.68,
+    orientation: "auto"
+  },
+  manual: {
+    margin: 56.69,
+    orientation: "portrait"
+  }
+};
 
 const els = {
   notice: document.getElementById("notice"),
@@ -455,7 +465,7 @@ async function generatePdfBlob() {
   }
 
   return {
-    blob: buildPdfBlob(pdfPages),
+    blob: buildPdfBlob(pdfPages, getPdfLayout()),
     fileName: normalizePdfName(els.pdfName.value)
   };
 }
@@ -501,16 +511,17 @@ async function pageToJpegBytes(page) {
   };
 }
 
-function buildPdfBlob(images) {
+function buildPdfBlob(images, layoutName = "standard") {
   const objects = new Map();
   const pageRefs = [];
   let nextObjectId = 3;
+  const layout = PDF_LAYOUTS[layoutName] || PDF_LAYOUTS.standard;
 
   for (const image of images) {
-    const isLandscape = image.width >= image.height;
+    const isLandscape = layout.orientation === "auto" && image.width >= image.height;
     const pageWidth = isLandscape ? 841.89 : 595.28;
     const pageHeight = isLandscape ? 595.28 : 841.89;
-    const margin = 22.68;
+    const margin = layout.margin;
     const fit = fitRect(image.width, image.height, pageWidth - margin * 2, pageHeight - margin * 2);
     const x = (pageWidth - fit.width) / 2;
     const y = (pageHeight - fit.height) / 2;
@@ -544,6 +555,10 @@ function buildPdfBlob(images) {
   ]);
 
   return new Blob([serializePdf(objects)], { type: "application/pdf" });
+}
+
+function getPdfLayout() {
+  return document.querySelector('input[name="pdfLayout"]:checked')?.value || "standard";
 }
 
 function serializePdf(objects) {

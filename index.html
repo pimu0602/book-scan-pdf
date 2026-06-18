@@ -92,6 +92,17 @@
         <div id="pageGrid" class="page-grid"></div>
 
         <div class="pdf-panel">
+          <fieldset class="pdf-layout-options">
+            <legend>PDFレイアウト</legend>
+            <label>
+              <input type="radio" name="pdfLayout" value="standard" checked>
+              <span>通常</span>
+            </label>
+            <label>
+              <input type="radio" name="pdfLayout" value="manual">
+              <span>マニュアル風</span>
+            </label>
+          </fieldset>
           <label for="pdfName">PDFファイル名</label>
           <div class="pdf-controls">
             <input id="pdfName" type="text" value="book-scan" autocomplete="off">

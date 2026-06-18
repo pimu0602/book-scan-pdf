@@ -421,6 +421,40 @@ input:focus-visible {
   gap: 10px;
 }
 
+.pdf-layout-options {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  min-width: 0;
+  margin: 0 0 4px;
+  padding: 0;
+  border: 0;
+}
+
+.pdf-layout-options legend {
+  margin-bottom: 8px;
+  padding: 0;
+  font-weight: 800;
+}
+
+.pdf-layout-options label {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  font-weight: 800;
+}
+
+.pdf-layout-options input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary);
+}
+
 .pdf-panel label {
   font-weight: 800;
 }
@@ -487,6 +521,14 @@ input:focus-visible {
   .pdf-controls {
     grid-template-columns: minmax(0, 1fr) auto auto;
     align-items: stretch;
+  }
+
+  .pdf-layout-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pdf-layout-options legend {
+    grid-column: 1 / -1;
   }
 }
 
