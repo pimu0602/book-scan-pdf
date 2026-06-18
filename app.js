@@ -12,6 +12,7 @@ const DOCUMENT_DETECTION_SIDE = 760;
 const APP_STATE_DB = "book-scan-pdf-state";
 const APP_STATE_STORE = "app";
 const APP_STATE_KEY = "current";
+const RESTORE_AFTER_PDF_KEY = "bookScanPdfRestoreAfterPreview";
 const PDF_LAYOUTS = {
   standard: {
     margin: 22.68,
@@ -456,6 +457,7 @@ async function createPdfFromPages() {
   try {
     await saveAppState();
     const { blob, fileName } = await generatePdfBlob();
+    markRestoreAfterPdfPreview();
     downloadBlob(blob, fileName);
     setPdfStatus("PDFを保存しました。保存したファイルを共有できます。");
   } catch (error) {
@@ -497,6 +499,7 @@ async function sharePdfFromPages() {
       }
     }
 
+    markRestoreAfterPdfPreview();
     downloadBlob(blob, fileName);
     setPdfStatus("このブラウザは直接共有に未対応です。保存されたPDFをファイルアプリから共有してください。", true);
   } catch (error) {
@@ -665,6 +668,58 @@ async function restoreAppState() {
   }
 }
 
+async function initializeSavedState() {
+  if (shouldRestoreAfterPdfPreview()) {
+    clearRestoreAfterPdfPreview();
+    await restoreAppState();
+    return;
+  }
+
+  await clearSavedAppState();
+}
+
+function markRestoreAfterPdfPreview() {
+  try {
+    window.sessionStorage?.setItem(RESTORE_AFTER_PDF_KEY, "1");
+  } catch (error) {
+    // Session storage can be unavailable in private browsing modes.
+  }
+}
+
+function shouldRestoreAfterPdfPreview() {
+  try {
+    return window.sessionStorage?.getItem(RESTORE_AFTER_PDF_KEY) === "1";
+  } catch (error) {
+    return false;
+  }
+}
+
+function clearRestoreAfterPdfPreview() {
+  try {
+    window.sessionStorage?.removeItem(RESTORE_AFTER_PDF_KEY);
+  } catch (error) {
+    // Nothing to clear when session storage is unavailable.
+  }
+}
+
+async function clearSavedAppState() {
+  if (!window.indexedDB) {
+    return;
+  }
+
+  try {
+    const db = await openAppStateDb();
+
+    try {
+      await idbDelete(db, APP_STATE_STORE, APP_STATE_KEY);
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    // A fresh app launch should not fail because cleanup was unavailable.
+  }
+}
+
 function openAppStateDb() {
   return new Promise((resolve, reject) => {
     const request = window.indexedDB.open(APP_STATE_DB, 1);
@@ -698,6 +753,17 @@ function idbPut(db, storeName, key, value) {
     const transaction = db.transaction(storeName, "readwrite");
 
     transaction.objectStore(storeName).put(value, key);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+}
+
+function idbDelete(db, storeName, key) {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(storeName, "readwrite");
+
+    transaction.objectStore(storeName).delete(key);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
     transaction.onabort = () => reject(transaction.error);
@@ -1502,7 +1568,7 @@ async function initApp() {
   bindEvents();
   updateCameraAvailability();
   updateCounts();
-  await restoreAppState();
+  await initializeSavedState();
 }
 
 void initApp();
