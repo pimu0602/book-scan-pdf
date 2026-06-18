@@ -8,9 +8,9 @@ let pdfBusy = false;
 
 const MAX_PDF_IMAGE_SIDE = 2600;
 const MAX_DOCUMENT_IMAGE_SIDE = 1800;
-const MAX_HIGH_QUALITY_IMAGE_SIDE = 2400;
+const MAX_BLEED_REDUCTION_IMAGE_SIDE = 2400;
 const DEFAULT_JPEG_QUALITY = 0.92;
-const HIGH_QUALITY_JPEG_QUALITY = 0.9;
+const BLEED_REDUCTION_JPEG_QUALITY = 0.9;
 const DOCUMENT_DETECTION_SIDE = 760;
 const APP_STATE_DB = "book-scan-pdf-state";
 const APP_STATE_STORE = "app";
@@ -35,15 +35,17 @@ const PDF_LAYOUTS = {
     jpegQuality: DEFAULT_JPEG_QUALITY,
     statusPrefix: "紙面を自動補正中"
   },
-  ai: {
+  bleed: {
     margin: 18,
     orientation: "portrait",
     correction: true,
-    maxSide: MAX_HIGH_QUALITY_IMAGE_SIDE,
-    correctionMaxSide: MAX_HIGH_QUALITY_IMAGE_SIDE,
-    enhancement: "highQuality",
-    jpegQuality: HIGH_QUALITY_JPEG_QUALITY,
-    statusPrefix: "高画質補正中"
+    maxSide: MAX_BLEED_REDUCTION_IMAGE_SIDE,
+    correctionMaxSide: MAX_BLEED_REDUCTION_IMAGE_SIDE,
+    enhancement: "bleedReduction",
+    jpegQuality: BLEED_REDUCTION_JPEG_QUALITY,
+    straightenFallback: true,
+    maxSkewDegrees: 8,
+    statusPrefix: "裏写り軽減中"
   }
 };
 
@@ -790,12 +792,20 @@ function idbDelete(db, storeName, key) {
 }
 
 function setPdfLayout(value) {
-  const layoutName = PDF_LAYOUTS[value] ? value : "standard";
+  const layoutName = normalizeLayoutName(value);
   const input = document.querySelector(`input[name="pdfLayout"][value="${layoutName}"]`);
 
   if (input) {
     input.checked = true;
   }
+}
+
+function normalizeLayoutName(value) {
+  if (value === "ai") {
+    return "bleed";
+  }
+
+  return PDF_LAYOUTS[value] ? value : "standard";
 }
 
 async function pageToJpegBytes(page, layout = PDF_LAYOUTS.standard) {
@@ -831,8 +841,8 @@ async function pageToJpegBytes(page, layout = PDF_LAYOUTS.standard) {
     }
   }
 
-  if (layout.enhancement === "highQuality") {
-    enhanceHighQualityDocumentCanvas(canvas);
+  if (layout.enhancement === "bleedReduction") {
+    enhanceBleedReductionCanvas(canvas);
   }
 
   const blob = await canvasToBlob(canvas, "image/jpeg", jpegQuality);
@@ -848,7 +858,7 @@ function createDocumentCanvas(sourceCanvas, layout = PDF_LAYOUTS.document) {
   const quad = detectDocumentQuad(sourceCanvas);
 
   if (!quad) {
-    return null;
+    return layout.straightenFallback ? createStraightenedFallbackCanvas(sourceCanvas, layout) : null;
   }
 
   const adjustedQuad = insetDocumentQuad(quad);
@@ -1116,8 +1126,8 @@ function warpQuadToCanvas(sourceCanvas, quad, outputCanvas) {
 }
 
 function enhanceCanvasForLayout(canvas, layout) {
-  if (layout.enhancement === "highQuality") {
-    enhanceHighQualityDocumentCanvas(canvas);
+  if (layout.enhancement === "bleedReduction") {
+    enhanceBleedReductionCanvas(canvas);
     return;
   }
 
@@ -1146,7 +1156,124 @@ function enhanceDocumentCanvas(canvas) {
   context.putImageData(imageData, 0, 0);
 }
 
-function enhanceHighQualityDocumentCanvas(canvas) {
+function createStraightenedFallbackCanvas(sourceCanvas, layout) {
+  const angle = estimateSkewAngle(sourceCanvas, layout.maxSkewDegrees || 8);
+  const outputCanvas = Math.abs(angle) >= 0.35
+    ? rotateCanvas(sourceCanvas, -angle)
+    : cloneCanvas(sourceCanvas);
+
+  enhanceCanvasForLayout(outputCanvas, layout);
+
+  return outputCanvas;
+}
+
+function estimateSkewAngle(canvas, maxDegrees) {
+  const scale = Math.min(1, 640 / Math.max(canvas.width, canvas.height));
+  const width = Math.max(1, Math.round(canvas.width * scale));
+  const height = Math.max(1, Math.round(canvas.height * scale));
+  const probeCanvas = document.createElement("canvas");
+  const context = probeCanvas.getContext("2d", { willReadFrequently: true });
+
+  probeCanvas.width = width;
+  probeCanvas.height = height;
+  context.drawImage(canvas, 0, 0, width, height);
+
+  const imageData = context.getImageData(0, 0, width, height);
+  const pixels = imageData.data;
+  const histogram = new Uint32Array(256);
+
+  for (let index = 0; index < pixels.length; index += 4) {
+    const gray = Math.round(0.299 * pixels[index] + 0.587 * pixels[index + 1] + 0.114 * pixels[index + 2]);
+
+    histogram[gray] += 1;
+  }
+
+  const threshold = clamp(otsuThreshold(histogram) - 18, 54, 170);
+  const points = [];
+  const step = Math.max(1, Math.floor(Math.max(width, height) / 420));
+  const centerX = width / 2;
+  const centerY = height / 2;
+
+  for (let y = 0; y < height; y += step) {
+    for (let x = 0; x < width; x += step) {
+      const offset = (y * width + x) * 4;
+      const gray = Math.round(0.299 * pixels[offset] + 0.587 * pixels[offset + 1] + 0.114 * pixels[offset + 2]);
+
+      if (gray < threshold) {
+        points.push({ x: x - centerX, y: y - centerY });
+      }
+    }
+  }
+
+  if (points.length < 80) {
+    return 0;
+  }
+
+  let bestAngle = 0;
+  let bestScore = -Infinity;
+
+  for (let angle = -maxDegrees; angle <= maxDegrees; angle += 0.5) {
+    const radians = angle * Math.PI / 180;
+    const sin = Math.sin(radians);
+    const cos = Math.cos(radians);
+    const bins = new Map();
+
+    for (const point of points) {
+      const rotatedY = -point.x * sin + point.y * cos;
+      const bin = Math.round(rotatedY / 2);
+
+      bins.set(bin, (bins.get(bin) || 0) + 1);
+    }
+
+    let score = 0;
+
+    for (const count of bins.values()) {
+      score += count * count;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestAngle = angle;
+    }
+  }
+
+  return bestAngle;
+}
+
+function rotateCanvas(sourceCanvas, angleDegrees) {
+  const radians = angleDegrees * Math.PI / 180;
+  const sin = Math.abs(Math.sin(radians));
+  const cos = Math.abs(Math.cos(radians));
+  const width = Math.ceil(sourceCanvas.width * cos + sourceCanvas.height * sin);
+  const height = Math.ceil(sourceCanvas.width * sin + sourceCanvas.height * cos);
+  const outputCanvas = document.createElement("canvas");
+  const context = outputCanvas.getContext("2d");
+
+  outputCanvas.width = width;
+  outputCanvas.height = height;
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, width, height);
+  context.translate(width / 2, height / 2);
+  context.rotate(radians);
+  context.drawImage(sourceCanvas, -sourceCanvas.width / 2, -sourceCanvas.height / 2);
+
+  return outputCanvas;
+}
+
+function cloneCanvas(sourceCanvas) {
+  const outputCanvas = document.createElement("canvas");
+  const context = outputCanvas.getContext("2d");
+
+  outputCanvas.width = sourceCanvas.width;
+  outputCanvas.height = sourceCanvas.height;
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+  context.drawImage(sourceCanvas, 0, 0);
+
+  return outputCanvas;
+}
+
+function enhanceBleedReductionCanvas(canvas) {
   const context = canvas.getContext("2d", { willReadFrequently: true });
   const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
   const pixels = imageData.data;
@@ -1168,10 +1295,14 @@ function enhanceHighQualityDocumentCanvas(canvas) {
   for (let index = 0, pixel = 0; index < pixels.length; index += 4, pixel += 1) {
     const gray = grayValues[pixel];
     const normalizedGray = clamp(((gray - blackPoint) * 255) / range, 0, 255);
-    let targetGray = gray * 0.42 + normalizedGray * 0.58;
+    let targetGray = gray * 0.3 + normalizedGray * 0.7;
 
-    if (targetGray > 202) {
-      targetGray += (255 - targetGray) * 0.45;
+    if (targetGray > 210) {
+      targetGray += (255 - targetGray) * 0.82;
+    } else if (targetGray > 176) {
+      targetGray += (255 - targetGray) * 0.52;
+    } else if (targetGray > 140) {
+      targetGray += (255 - targetGray) * 0.2;
     } else if (targetGray < 92) {
       targetGray *= 0.85;
     } else if (targetGray < 150) {
@@ -1181,7 +1312,7 @@ function enhanceHighQualityDocumentCanvas(canvas) {
     targetGray = clamp(targetGray, 0, 255);
 
     const ratio = gray > 0 ? targetGray / gray : 0;
-    const saturation = targetGray > 210 ? 0.38 : 0.72;
+    const saturation = targetGray > 190 ? 0.2 : 0.62;
     const red = pixels[index] * ratio;
     const green = pixels[index + 1] * ratio;
     const blue = pixels[index + 2] * ratio;
@@ -1504,7 +1635,7 @@ function buildPdfBlob(images, layoutName = "standard") {
 }
 
 function getPdfLayout() {
-  return document.querySelector('input[name="pdfLayout"]:checked')?.value || "standard";
+  return normalizeLayoutName(document.querySelector('input[name="pdfLayout"]:checked')?.value || "standard");
 }
 
 function serializePdf(objects) {
