@@ -15,11 +15,6 @@ const PDF_LAYOUTS = {
     orientation: "auto",
     correction: false
   },
-  manual: {
-    margin: 56.69,
-    orientation: "portrait",
-    correction: false
-  },
   document: {
     margin: 22.68,
     orientation: "portrait",
