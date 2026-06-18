@@ -8,6 +8,9 @@ let pdfBusy = false;
 
 const MAX_PDF_IMAGE_SIDE = 2600;
 const MAX_DOCUMENT_IMAGE_SIDE = 1800;
+const MAX_AI_PDF_IMAGE_SIDE = 2200;
+const DEFAULT_JPEG_QUALITY = 0.92;
+const AI_JPEG_QUALITY = 0.84;
 const DOCUMENT_DETECTION_SIDE = 760;
 const APP_STATE_DB = "book-scan-pdf-state";
 const APP_STATE_STORE = "app";
@@ -17,12 +20,30 @@ const PDF_LAYOUTS = {
   standard: {
     margin: 22.68,
     orientation: "auto",
-    correction: false
+    correction: false,
+    maxSide: MAX_PDF_IMAGE_SIDE,
+    jpegQuality: DEFAULT_JPEG_QUALITY,
+    statusPrefix: "PDFを作成中"
   },
   document: {
     margin: 22.68,
     orientation: "portrait",
-    correction: true
+    correction: true,
+    maxSide: MAX_DOCUMENT_IMAGE_SIDE,
+    correctionMaxSide: MAX_DOCUMENT_IMAGE_SIDE,
+    enhancement: "document",
+    jpegQuality: DEFAULT_JPEG_QUALITY,
+    statusPrefix: "紙面を自動補正中"
+  },
+  ai: {
+    margin: 18,
+    orientation: "portrait",
+    correction: true,
+    maxSide: MAX_AI_PDF_IMAGE_SIDE,
+    correctionMaxSide: MAX_AI_PDF_IMAGE_SIDE,
+    enhancement: "ai",
+    jpegQuality: AI_JPEG_QUALITY,
+    statusPrefix: "AI用に補正中"
   }
 };
 
@@ -522,9 +543,7 @@ async function generatePdfBlob() {
 
   for (let index = 0; index < pages.length; index += 1) {
     const page = pages[index];
-    setPdfStatus(layout.correction
-      ? `紙面を自動補正中... ${index + 1}/${pages.length}`
-      : `PDFを作成中... ${index + 1}/${pages.length}`);
+    setPdfStatus(`${layout.statusPrefix || "PDFを作成中"}... ${index + 1}/${pages.length}`);
     pdfPages.push(await pageToJpegBytes(page, layout));
   }
 
@@ -783,7 +802,8 @@ async function pageToJpegBytes(page, layout = PDF_LAYOUTS.standard) {
   const image = await loadImage(page.url);
   const sourceWidth = image.naturalWidth || image.width;
   const sourceHeight = image.naturalHeight || image.height;
-  const maxSide = layout.correction ? MAX_DOCUMENT_IMAGE_SIDE : MAX_PDF_IMAGE_SIDE;
+  const maxSide = layout.maxSide || (layout.correction ? MAX_DOCUMENT_IMAGE_SIDE : MAX_PDF_IMAGE_SIDE);
+  const jpegQuality = layout.jpegQuality || DEFAULT_JPEG_QUALITY;
   const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
   const width = Math.max(1, Math.round(sourceWidth * scale));
   const height = Math.max(1, Math.round(sourceHeight * scale));
@@ -798,10 +818,10 @@ async function pageToJpegBytes(page, layout = PDF_LAYOUTS.standard) {
   context.drawImage(image, 0, 0, width, height);
 
   if (layout.correction) {
-    const correctedCanvas = createDocumentCanvas(canvas);
+    const correctedCanvas = createDocumentCanvas(canvas, layout);
 
     if (correctedCanvas) {
-      const correctedBlob = await canvasToBlob(correctedCanvas, "image/jpeg", 0.92);
+      const correctedBlob = await canvasToBlob(correctedCanvas, "image/jpeg", jpegQuality);
 
       return {
         bytes: new Uint8Array(await correctedBlob.arrayBuffer()),
@@ -811,7 +831,11 @@ async function pageToJpegBytes(page, layout = PDF_LAYOUTS.standard) {
     }
   }
 
-  const blob = await canvasToBlob(canvas, "image/jpeg", 0.92);
+  if (layout.enhancement === "ai") {
+    enhanceAiDocumentCanvas(canvas);
+  }
+
+  const blob = await canvasToBlob(canvas, "image/jpeg", jpegQuality);
 
   return {
     bytes: new Uint8Array(await blob.arrayBuffer()),
@@ -820,7 +844,7 @@ async function pageToJpegBytes(page, layout = PDF_LAYOUTS.standard) {
   };
 }
 
-function createDocumentCanvas(sourceCanvas) {
+function createDocumentCanvas(sourceCanvas, layout = PDF_LAYOUTS.document) {
   const quad = detectDocumentQuad(sourceCanvas);
 
   if (!quad) {
@@ -839,7 +863,8 @@ function createDocumentCanvas(sourceCanvas) {
     return null;
   }
 
-  const scale = Math.min(1, MAX_DOCUMENT_IMAGE_SIDE / Math.max(rawWidth, rawHeight));
+  const correctionMaxSide = layout.correctionMaxSide || MAX_DOCUMENT_IMAGE_SIDE;
+  const scale = Math.min(1, correctionMaxSide / Math.max(rawWidth, rawHeight));
   const outputWidth = Math.max(1, Math.round(rawWidth * scale));
   const outputHeight = Math.max(1, Math.round(rawHeight * scale));
   const outputCanvas = document.createElement("canvas");
@@ -848,7 +873,7 @@ function createDocumentCanvas(sourceCanvas) {
   outputCanvas.height = outputHeight;
 
   warpQuadToCanvas(sourceCanvas, adjustedQuad, outputCanvas);
-  enhanceDocumentCanvas(outputCanvas);
+  enhanceCanvasForLayout(outputCanvas, layout);
 
   return trimDocumentBorder(outputCanvas) || outputCanvas;
 }
@@ -1090,6 +1115,15 @@ function warpQuadToCanvas(sourceCanvas, quad, outputCanvas) {
   outputContext.putImageData(outputData, 0, 0);
 }
 
+function enhanceCanvasForLayout(canvas, layout) {
+  if (layout.enhancement === "ai") {
+    enhanceAiDocumentCanvas(canvas);
+    return;
+  }
+
+  enhanceDocumentCanvas(canvas);
+}
+
 function enhanceDocumentCanvas(canvas) {
   const context = canvas.getContext("2d", { willReadFrequently: true });
   const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
@@ -1110,6 +1144,65 @@ function enhanceDocumentCanvas(canvas) {
   }
 
   context.putImageData(imageData, 0, 0);
+}
+
+function enhanceAiDocumentCanvas(canvas) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const pixels = imageData.data;
+  const totalPixels = canvas.width * canvas.height;
+  const grayValues = new Uint8Array(totalPixels);
+  const histogram = new Uint32Array(256);
+
+  for (let index = 0, pixel = 0; index < pixels.length; index += 4, pixel += 1) {
+    const gray = Math.round(0.299 * pixels[index] + 0.587 * pixels[index + 1] + 0.114 * pixels[index + 2]);
+
+    grayValues[pixel] = gray;
+    histogram[gray] += 1;
+  }
+
+  const blackPoint = histogramPercentile(histogram, totalPixels, 0.02);
+  const whitePoint = histogramPercentile(histogram, totalPixels, 0.94);
+  const threshold = clamp(otsuThreshold(histogram) + 6, 128, 220);
+  const range = Math.max(48, whitePoint - blackPoint);
+
+  for (let index = 0, pixel = 0; index < pixels.length; index += 4, pixel += 1) {
+    const gray = grayValues[pixel];
+    let value = clamp(((gray - blackPoint) * 255) / range, 0, 255);
+
+    if (gray >= threshold + 30 || value >= 228) {
+      value = 255;
+    } else if (gray <= threshold - 76 || value <= 64) {
+      value *= 0.55;
+    } else if (gray < threshold) {
+      value *= 0.72;
+    } else {
+      value = value * 1.12 + 10;
+    }
+
+    value = Math.round(clamp(value, 0, 255));
+    pixels[index] = value;
+    pixels[index + 1] = value;
+    pixels[index + 2] = value;
+    pixels[index + 3] = 255;
+  }
+
+  context.putImageData(imageData, 0, 0);
+}
+
+function histogramPercentile(histogram, total, ratio) {
+  const target = Math.max(1, Math.round(total * ratio));
+  let cumulative = 0;
+
+  for (let value = 0; value < histogram.length; value += 1) {
+    cumulative += histogram[value];
+
+    if (cumulative >= target) {
+      return value;
+    }
+  }
+
+  return histogram.length - 1;
 }
 
 function trimDocumentBorder(canvas) {
