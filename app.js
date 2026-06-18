@@ -7,14 +7,23 @@ let captureBusy = false;
 let pdfBusy = false;
 
 const MAX_PDF_IMAGE_SIDE = 2600;
+const MAX_DOCUMENT_IMAGE_SIDE = 1800;
+const DOCUMENT_DETECTION_SIDE = 760;
 const PDF_LAYOUTS = {
   standard: {
     margin: 22.68,
-    orientation: "auto"
+    orientation: "auto",
+    correction: false
   },
   manual: {
     margin: 56.69,
-    orientation: "portrait"
+    orientation: "portrait",
+    correction: false
+  },
+  document: {
+    margin: 22.68,
+    orientation: "portrait",
+    correction: true
   }
 };
 
@@ -457,15 +466,19 @@ async function sharePdfFromPages() {
 
 async function generatePdfBlob() {
   const pdfPages = [];
+  const layoutName = getPdfLayout();
+  const layout = PDF_LAYOUTS[layoutName] || PDF_LAYOUTS.standard;
 
   for (let index = 0; index < pages.length; index += 1) {
     const page = pages[index];
-    setPdfStatus(`PDFを作成中... ${index + 1}/${pages.length}`);
-    pdfPages.push(await pageToJpegBytes(page));
+    setPdfStatus(layout.correction
+      ? `紙面を自動補正中... ${index + 1}/${pages.length}`
+      : `PDFを作成中... ${index + 1}/${pages.length}`);
+    pdfPages.push(await pageToJpegBytes(page, layout));
   }
 
   return {
-    blob: buildPdfBlob(pdfPages, getPdfLayout()),
+    blob: buildPdfBlob(pdfPages, layoutName),
     fileName: normalizePdfName(els.pdfName.value)
   };
 }
@@ -485,11 +498,12 @@ function ensurePagesForPdf() {
   return false;
 }
 
-async function pageToJpegBytes(page) {
+async function pageToJpegBytes(page, layout = PDF_LAYOUTS.standard) {
   const image = await loadImage(page.url);
   const sourceWidth = image.naturalWidth || image.width;
   const sourceHeight = image.naturalHeight || image.height;
-  const scale = Math.min(1, MAX_PDF_IMAGE_SIDE / Math.max(sourceWidth, sourceHeight));
+  const maxSide = layout.correction ? MAX_DOCUMENT_IMAGE_SIDE : MAX_PDF_IMAGE_SIDE;
+  const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
   const width = Math.max(1, Math.round(sourceWidth * scale));
   const height = Math.max(1, Math.round(sourceHeight * scale));
   const canvas = document.createElement("canvas");
@@ -502,6 +516,20 @@ async function pageToJpegBytes(page) {
   context.fillRect(0, 0, width, height);
   context.drawImage(image, 0, 0, width, height);
 
+  if (layout.correction) {
+    const correctedCanvas = createDocumentCanvas(canvas);
+
+    if (correctedCanvas) {
+      const correctedBlob = await canvasToBlob(correctedCanvas, "image/jpeg", 0.92);
+
+      return {
+        bytes: new Uint8Array(await correctedBlob.arrayBuffer()),
+        width: correctedCanvas.width,
+        height: correctedCanvas.height
+      };
+    }
+  }
+
   const blob = await canvasToBlob(canvas, "image/jpeg", 0.92);
 
   return {
@@ -509,6 +537,426 @@ async function pageToJpegBytes(page) {
     width,
     height
   };
+}
+
+function createDocumentCanvas(sourceCanvas) {
+  const quad = detectDocumentQuad(sourceCanvas);
+
+  if (!quad) {
+    return null;
+  }
+
+  const topWidth = distance(quad.topLeft, quad.topRight);
+  const bottomWidth = distance(quad.bottomLeft, quad.bottomRight);
+  const leftHeight = distance(quad.topLeft, quad.bottomLeft);
+  const rightHeight = distance(quad.topRight, quad.bottomRight);
+  const rawWidth = Math.max(topWidth, bottomWidth);
+  const rawHeight = Math.max(leftHeight, rightHeight);
+
+  if (rawWidth < 80 || rawHeight < 80) {
+    return null;
+  }
+
+  const scale = Math.min(1, MAX_DOCUMENT_IMAGE_SIDE / Math.max(rawWidth, rawHeight));
+  const outputWidth = Math.max(1, Math.round(rawWidth * scale));
+  const outputHeight = Math.max(1, Math.round(rawHeight * scale));
+  const outputCanvas = document.createElement("canvas");
+
+  outputCanvas.width = outputWidth;
+  outputCanvas.height = outputHeight;
+
+  warpQuadToCanvas(sourceCanvas, quad, outputCanvas);
+  enhanceDocumentCanvas(outputCanvas);
+
+  return outputCanvas;
+}
+
+function detectDocumentQuad(sourceCanvas) {
+  const scale = Math.min(1, DOCUMENT_DETECTION_SIDE / Math.max(sourceCanvas.width, sourceCanvas.height));
+  const width = Math.max(1, Math.round(sourceCanvas.width * scale));
+  const height = Math.max(1, Math.round(sourceCanvas.height * scale));
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+
+  canvas.width = width;
+  canvas.height = height;
+  context.drawImage(sourceCanvas, 0, 0, width, height);
+
+  const imageData = context.getImageData(0, 0, width, height);
+  const pixels = imageData.data;
+  const grays = new Uint8Array(width * height);
+  const histogram = new Uint32Array(256);
+
+  for (let index = 0, pixel = 0; index < pixels.length; index += 4, pixel += 1) {
+    const gray = Math.round(0.299 * pixels[index] + 0.587 * pixels[index + 1] + 0.114 * pixels[index + 2]);
+    grays[pixel] = gray;
+    histogram[gray] += 1;
+  }
+
+  const threshold = clamp(otsuThreshold(histogram) + 8, 120, 218);
+  const mask = new Uint8Array(width * height);
+
+  for (let index = 0, pixel = 0; index < pixels.length; index += 4, pixel += 1) {
+    const red = pixels[index];
+    const green = pixels[index + 1];
+    const blue = pixels[index + 2];
+    const gray = grays[pixel];
+    const spread = Math.max(red, green, blue) - Math.min(red, green, blue);
+
+    if ((gray >= threshold && spread < 86) || gray >= threshold + 24) {
+      mask[pixel] = 1;
+    }
+  }
+
+  const component = findDocumentComponent(mask, width, height);
+
+  if (!component) {
+    return null;
+  }
+
+  const minArea = width * height * 0.08;
+
+  if (component.area < minArea) {
+    return null;
+  }
+
+  const inverseScale = 1 / scale;
+
+  return {
+    topLeft: scalePoint(component.topLeft, inverseScale),
+    topRight: scalePoint(component.topRight, inverseScale),
+    bottomRight: scalePoint(component.bottomRight, inverseScale),
+    bottomLeft: scalePoint(component.bottomLeft, inverseScale)
+  };
+}
+
+function findDocumentComponent(mask, width, height) {
+  const visited = new Uint8Array(mask.length);
+  const queue = new Int32Array(mask.length);
+  let best = null;
+  const centerX = width / 2;
+  const centerY = height / 2;
+
+  for (let start = 0; start < mask.length; start += 1) {
+    if (!mask[start] || visited[start]) {
+      continue;
+    }
+
+    let head = 0;
+    let tail = 0;
+    let area = 0;
+    let minX = width;
+    let minY = height;
+    let maxX = 0;
+    let maxY = 0;
+    const extremes = {
+      topLeft: { score: Infinity, point: null },
+      topRight: { score: -Infinity, point: null },
+      bottomRight: { score: -Infinity, point: null },
+      bottomLeft: { score: -Infinity, point: null }
+    };
+
+    queue[tail] = start;
+    tail += 1;
+    visited[start] = 1;
+
+    while (head < tail) {
+      const current = queue[head];
+      head += 1;
+
+      const x = current % width;
+      const y = Math.floor(current / width);
+      area += 1;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+      updateExtremes(extremes, x, y);
+
+      if (x > 0) {
+        if (mask[current - 1] && !visited[current - 1]) {
+          visited[current - 1] = 1;
+          queue[tail] = current - 1;
+          tail += 1;
+        }
+      }
+
+      if (x < width - 1 && mask[current + 1] && !visited[current + 1]) {
+        visited[current + 1] = 1;
+        queue[tail] = current + 1;
+        tail += 1;
+      }
+
+      if (y > 0 && mask[current - width] && !visited[current - width]) {
+        visited[current - width] = 1;
+        queue[tail] = current - width;
+        tail += 1;
+      }
+
+      if (y < height - 1 && mask[current + width] && !visited[current + width]) {
+        visited[current + width] = 1;
+        queue[tail] = current + width;
+        tail += 1;
+      }
+    }
+
+    const containsCenter = centerX >= minX && centerX <= maxX && centerY >= minY && centerY <= maxY;
+    const centerBonus = containsCenter ? 2 : 1;
+    const score = area * centerBonus;
+
+    if (!best || score > best.score) {
+      best = {
+        area,
+        score,
+        minX,
+        minY,
+        maxX,
+        maxY,
+        topLeft: extremes.topLeft.point,
+        topRight: extremes.topRight.point,
+        bottomRight: extremes.bottomRight.point,
+        bottomLeft: extremes.bottomLeft.point
+      };
+    }
+  }
+
+  if (!best || !best.topLeft || !best.topRight || !best.bottomRight || !best.bottomLeft) {
+    return null;
+  }
+
+  const boxWidth = best.maxX - best.minX;
+  const boxHeight = best.maxY - best.minY;
+
+  if (boxWidth < width * 0.22 || boxHeight < height * 0.22) {
+    return null;
+  }
+
+  return best;
+}
+
+function updateExtremes(extremes, x, y) {
+  const topLeft = x + y;
+  const topRight = x - y;
+  const bottomRight = x + y;
+  const bottomLeft = y - x;
+
+  if (topLeft < extremes.topLeft.score) {
+    extremes.topLeft = { score: topLeft, point: { x, y } };
+  }
+
+  if (topRight > extremes.topRight.score) {
+    extremes.topRight = { score: topRight, point: { x, y } };
+  }
+
+  if (bottomRight > extremes.bottomRight.score) {
+    extremes.bottomRight = { score: bottomRight, point: { x, y } };
+  }
+
+  if (bottomLeft > extremes.bottomLeft.score) {
+    extremes.bottomLeft = { score: bottomLeft, point: { x, y } };
+  }
+}
+
+function warpQuadToCanvas(sourceCanvas, quad, outputCanvas) {
+  const sourceContext = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  const outputContext = outputCanvas.getContext("2d", { willReadFrequently: true });
+  const sourceData = sourceContext.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+  const outputData = outputContext.createImageData(outputCanvas.width, outputCanvas.height);
+  const matrix = homographyFromRectToQuad(outputCanvas.width, outputCanvas.height, quad);
+
+  for (let y = 0; y < outputCanvas.height; y += 1) {
+    for (let x = 0; x < outputCanvas.width; x += 1) {
+      const sourcePoint = applyHomography(matrix, x + 0.5, y + 0.5);
+      const color = sampleBilinear(sourceData, sourceCanvas.width, sourceCanvas.height, sourcePoint.x, sourcePoint.y);
+      const target = (y * outputCanvas.width + x) * 4;
+
+      outputData.data[target] = color.red;
+      outputData.data[target + 1] = color.green;
+      outputData.data[target + 2] = color.blue;
+      outputData.data[target + 3] = 255;
+    }
+  }
+
+  outputContext.putImageData(outputData, 0, 0);
+}
+
+function enhanceDocumentCanvas(canvas) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const pixels = imageData.data;
+
+  for (let index = 0; index < pixels.length; index += 4) {
+    const gray = 0.299 * pixels[index] + 0.587 * pixels[index + 1] + 0.114 * pixels[index + 2];
+    const value = gray > 178
+      ? 255
+      : gray < 92
+        ? 0
+        : clamp((gray - 92) * 2.18, 0, 255);
+
+    pixels[index] = value;
+    pixels[index + 1] = value;
+    pixels[index + 2] = value;
+    pixels[index + 3] = 255;
+  }
+
+  context.putImageData(imageData, 0, 0);
+}
+
+function homographyFromRectToQuad(width, height, quad) {
+  const source = [
+    { x: 0, y: 0 },
+    { x: width, y: 0 },
+    { x: width, y: height },
+    { x: 0, y: height }
+  ];
+  const target = [quad.topLeft, quad.topRight, quad.bottomRight, quad.bottomLeft];
+  const system = [];
+
+  for (let index = 0; index < source.length; index += 1) {
+    const src = source[index];
+    const dst = target[index];
+
+    system.push([src.x, src.y, 1, 0, 0, 0, -src.x * dst.x, -src.y * dst.x, dst.x]);
+    system.push([0, 0, 0, src.x, src.y, 1, -src.x * dst.y, -src.y * dst.y, dst.y]);
+  }
+
+  const solved = solveLinearSystem(system);
+
+  return [
+    solved[0], solved[1], solved[2],
+    solved[3], solved[4], solved[5],
+    solved[6], solved[7], 1
+  ];
+}
+
+function solveLinearSystem(matrix) {
+  const size = 8;
+
+  for (let column = 0; column < size; column += 1) {
+    let pivot = column;
+
+    for (let row = column + 1; row < size; row += 1) {
+      if (Math.abs(matrix[row][column]) > Math.abs(matrix[pivot][column])) {
+        pivot = row;
+      }
+    }
+
+    [matrix[column], matrix[pivot]] = [matrix[pivot], matrix[column]];
+
+    const divisor = matrix[column][column] || 1;
+
+    for (let value = column; value <= size; value += 1) {
+      matrix[column][value] /= divisor;
+    }
+
+    for (let row = 0; row < size; row += 1) {
+      if (row === column) {
+        continue;
+      }
+
+      const factor = matrix[row][column];
+
+      for (let value = column; value <= size; value += 1) {
+        matrix[row][value] -= factor * matrix[column][value];
+      }
+    }
+  }
+
+  return matrix.map((row) => row[size]);
+}
+
+function applyHomography(matrix, x, y) {
+  const denominator = matrix[6] * x + matrix[7] * y + matrix[8];
+
+  return {
+    x: (matrix[0] * x + matrix[1] * y + matrix[2]) / denominator,
+    y: (matrix[3] * x + matrix[4] * y + matrix[5]) / denominator
+  };
+}
+
+function sampleBilinear(imageData, width, height, x, y) {
+  const clampedX = clamp(x, 0, width - 1);
+  const clampedY = clamp(y, 0, height - 1);
+  const x0 = Math.floor(clampedX);
+  const y0 = Math.floor(clampedY);
+  const x1 = Math.min(width - 1, x0 + 1);
+  const y1 = Math.min(height - 1, y0 + 1);
+  const dx = clampedX - x0;
+  const dy = clampedY - y0;
+  const topLeft = (y0 * width + x0) * 4;
+  const topRight = (y0 * width + x1) * 4;
+  const bottomLeft = (y1 * width + x0) * 4;
+  const bottomRight = (y1 * width + x1) * 4;
+
+  return {
+    red: bilinearChannel(imageData.data, topLeft, topRight, bottomLeft, bottomRight, dx, dy, 0),
+    green: bilinearChannel(imageData.data, topLeft, topRight, bottomLeft, bottomRight, dx, dy, 1),
+    blue: bilinearChannel(imageData.data, topLeft, topRight, bottomLeft, bottomRight, dx, dy, 2)
+  };
+}
+
+function bilinearChannel(data, topLeft, topRight, bottomLeft, bottomRight, dx, dy, offset) {
+  const top = data[topLeft + offset] * (1 - dx) + data[topRight + offset] * dx;
+  const bottom = data[bottomLeft + offset] * (1 - dx) + data[bottomRight + offset] * dx;
+
+  return Math.round(top * (1 - dy) + bottom * dy);
+}
+
+function otsuThreshold(histogram) {
+  let total = 0;
+  let sum = 0;
+
+  for (let value = 0; value < histogram.length; value += 1) {
+    total += histogram[value];
+    sum += value * histogram[value];
+  }
+
+  let backgroundWeight = 0;
+  let backgroundSum = 0;
+  let bestVariance = 0;
+  let threshold = 160;
+
+  for (let value = 0; value < histogram.length; value += 1) {
+    backgroundWeight += histogram[value];
+
+    if (backgroundWeight === 0) {
+      continue;
+    }
+
+    const foregroundWeight = total - backgroundWeight;
+
+    if (foregroundWeight === 0) {
+      break;
+    }
+
+    backgroundSum += value * histogram[value];
+
+    const backgroundMean = backgroundSum / backgroundWeight;
+    const foregroundMean = (sum - backgroundSum) / foregroundWeight;
+    const variance = backgroundWeight * foregroundWeight * (backgroundMean - foregroundMean) ** 2;
+
+    if (variance > bestVariance) {
+      bestVariance = variance;
+      threshold = value;
+    }
+  }
+
+  return threshold;
+}
+
+function scalePoint(point, scale) {
+  return {
+    x: point.x * scale,
+    y: point.y * scale
+  };
+}
+
+function distance(first, second) {
+  return Math.hypot(first.x - second.x, first.y - second.y);
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function buildPdfBlob(images, layoutName = "standard") {
