@@ -3,16 +3,16 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Book Scan PDF</title>
+    <title>Paper to AI</title>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
     <main class="app-shell">
       <header class="app-header">
         <div>
-          <p class="app-kicker">book-scan-pdf</p>
-          <h1>Book Scan PDF</h1>
-          <p class="app-lead">紙の本や資料を撮影してPDFにできます。</p>
+          <p class="app-kicker">paper-to-ai</p>
+          <h1>Paper to AI</h1>
+          <p class="app-lead">紙資料をPDFにして、AIへの依頼文まで作れます。</p>
         </div>
         <div class="page-counter" aria-live="polite">
           <span id="totalPages">0</span>
@@ -109,11 +109,103 @@
           </fieldset>
           <label for="pdfName">PDFファイル名</label>
           <div class="pdf-controls">
-            <input id="pdfName" type="text" value="book-scan" autocomplete="off">
+            <input id="pdfName" type="text" value="paper-to-ai" autocomplete="off">
             <button id="createPdf" class="button button-primary" type="button">PDFを作成</button>
             <button id="sharePdf" class="button button-secondary" type="button">PDFを共有</button>
           </div>
           <p id="pdfStatus" class="pdf-status" aria-live="polite"></p>
+          <div id="pdfCompletion" class="pdf-completion" hidden>
+            <p><strong>PDFを作成しました。</strong></p>
+            <button id="openPromptInterview" class="button button-primary" type="button">AI依頼文を作る</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="promptView" class="view" aria-labelledby="promptTitle">
+        <div class="view-heading view-heading-row">
+          <div>
+            <h2 id="promptTitle">AI依頼文を作る</h2>
+            <p>このPDFをAIでどう使うか選んでください。</p>
+          </div>
+          <div class="heading-actions">
+            <button id="backToPages" class="button button-quiet" type="button">PDF画面へ戻る</button>
+          </div>
+        </div>
+
+        <div class="prompt-workspace">
+          <form id="promptInterviewForm" class="prompt-form" novalidate>
+            <fieldset id="purposeGroup" class="interview-group">
+              <legend>Q1. このPDFをAIで何に使いたいですか？</legend>
+              <div class="choice-grid" data-question="purpose">
+                <button class="choice-button" type="button" data-value="summary" aria-pressed="false">要約したい</button>
+                <button class="choice-button" type="button" data-value="procedure" aria-pressed="false">手順書にしたい</button>
+                <button class="choice-button" type="button" data-value="checklist" aria-pressed="false">チェックリストにしたい</button>
+                <button class="choice-button" type="button" data-value="glossary" aria-pressed="false">用語を解説したい</button>
+                <button class="choice-button" type="button" data-value="caution" aria-pressed="false">注意点を抜き出したい</button>
+                <button class="choice-button" type="button" data-value="training" aria-pressed="false">教育資料にしたい</button>
+                <button class="choice-button" type="button" data-value="social" aria-pressed="false">SNS投稿にしたい</button>
+                <button class="choice-button" type="button" data-value="imagePrompt" aria-pressed="false">画像生成プロンプトを作りたい</button>
+              </div>
+            </fieldset>
+
+            <fieldset id="audienceGroup" class="interview-group">
+              <legend>Q2. 誰向けに整理しますか？</legend>
+              <div class="choice-grid" data-question="audience">
+                <button class="choice-button" type="button" data-value="self" aria-pressed="false">自分用</button>
+                <button class="choice-button" type="button" data-value="beginner" aria-pressed="false">初心者向け</button>
+                <button class="choice-button" type="button" data-value="newEmployee" aria-pressed="false">新人教育向け</button>
+                <button class="choice-button" type="button" data-value="fieldWorker" aria-pressed="false">現場作業者向け</button>
+                <button class="choice-button" type="button" data-value="customer" aria-pressed="false">お客さん向け</button>
+                <button class="choice-button" type="button" data-value="snsReader" aria-pressed="false">SNS読者向け</button>
+              </div>
+            </fieldset>
+
+            <fieldset id="outputFormatGroup" class="interview-group">
+              <legend>Q3. どの形式で出力したいですか？</legend>
+              <div class="choice-grid" data-question="outputFormat">
+                <button class="choice-button" type="button" data-value="bullet" aria-pressed="false">箇条書き</button>
+                <button class="choice-button" type="button" data-value="table" aria-pressed="false">表形式</button>
+                <button class="choice-button" type="button" data-value="steps" aria-pressed="false">手順形式</button>
+                <button class="choice-button" type="button" data-value="checklist" aria-pressed="false">チェックリスト形式</button>
+                <button class="choice-button" type="button" data-value="explanation" aria-pressed="false">説明文</button>
+                <button class="choice-button" type="button" data-value="post" aria-pressed="false">投稿文</button>
+                <button class="choice-button" type="button" data-value="imagePrompt" aria-pressed="false">画像生成用プロンプト</button>
+              </div>
+            </fieldset>
+
+            <fieldset class="interview-group">
+              <legend>Q4. 追加で重視したいこと</legend>
+              <div id="promptOptions" class="option-grid">
+                <label><input type="checkbox" value="explainTerms">専門用語をかみ砕く</label>
+                <label><input type="checkbox" value="fieldPractical">現場で使える形にする</label>
+                <label><input type="checkbox" value="priorityOrder">重要度順に並べる</label>
+                <label><input type="checkbox" value="separateFactAndAssumption">推測と事実を分ける</label>
+                <label><input type="checkbox" value="noUnsupportedClaims">PDFに書いていないことは断定しない</label>
+                <label><input type="checkbox" value="avoidConfidentialInfo">機密情報や固有名詞を出しすぎない</label>
+                <label><input type="checkbox" value="includeCommonMistakes">ミスしやすい点も出す</label>
+                <label><input type="checkbox" value="includeBeginnerPitfalls">初心者がつまずく点も出す</label>
+              </div>
+            </fieldset>
+
+            <div class="interview-group">
+              <label for="freeTextInput">追加で伝えたいこと</label>
+              <textarea id="freeTextInput" rows="5" placeholder="例：初めて学ぶ人が現場で確認しながら使える形にしたい"></textarea>
+            </div>
+
+            <p id="promptInterviewError" class="prompt-message prompt-error" role="alert"></p>
+            <button id="generatePromptButton" class="button button-primary prompt-primary-action" type="submit">AI依頼文を生成</button>
+          </form>
+
+          <section id="generatedPromptArea" class="prompt-result" aria-labelledby="generatedPromptTitle" hidden>
+            <h3 id="generatedPromptTitle">生成されたAI依頼文</h3>
+            <textarea id="generatedPromptText" rows="18" readonly></textarea>
+            <div class="prompt-result-actions">
+              <button id="copyPromptButton" class="button button-primary" type="button">コピーする</button>
+              <button id="editPromptButton" class="button button-secondary" type="button">編集する</button>
+              <button id="restartPromptButton" class="button button-quiet" type="button">もう一度作る</button>
+            </div>
+            <p id="promptCopyStatus" class="prompt-message" aria-live="polite"></p>
+          </section>
         </div>
       </section>
     </main>

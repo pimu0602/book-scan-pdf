@@ -5,6 +5,7 @@ let cameraStream = null;
 let captureSessionIds = [];
 let captureBusy = false;
 let pdfBusy = false;
+let pdfReadyForPrompt = false;
 
 const MAX_PDF_IMAGE_SIDE = 2600;
 const MAX_DOCUMENT_IMAGE_SIDE = 1800;
@@ -12,10 +13,10 @@ const MAX_BLEED_REDUCTION_IMAGE_SIDE = 2400;
 const DEFAULT_JPEG_QUALITY = 0.92;
 const BLEED_REDUCTION_JPEG_QUALITY = 0.9;
 const DOCUMENT_DETECTION_SIDE = 760;
-const APP_STATE_DB = "book-scan-pdf-state";
+const APP_STATE_DB = "paper-to-ai-state";
 const APP_STATE_STORE = "app";
 const APP_STATE_KEY = "current";
-const RESTORE_AFTER_PDF_KEY = "bookScanPdfRestoreAfterPreview";
+const RESTORE_AFTER_PDF_KEY = "paperToAiRestoreAfterPreview";
 const PDF_LAYOUTS = {
   standard: {
     margin: 22.68,
@@ -49,6 +50,119 @@ const PDF_LAYOUTS = {
   }
 };
 
+const promptInterviewState = {
+  purpose: "",
+  audience: "",
+  outputFormat: "",
+  options: [],
+  freeText: ""
+};
+
+const purposeTemplates = {
+  summary: `このPDFを読み取り、内容を要約してください。
+以下の形式で整理してください。
+1. 全体の要点
+2. 重要な章・項目
+3. 最初に理解すべきこと
+4. 実務で重要なポイント
+5. 不明点として確認すべきこと`,
+  procedure: `このPDFを読み取り、実務で使える手順書にしてください。
+以下の形式で整理してください。
+1. 作業の目的
+2. 事前に確認すること
+3. 必要な準備
+4. 作業手順
+5. 判断基準
+6. 注意点
+7. よくあるミス
+8. 作業後の確認項目
+順番に沿って実行できる形で整理してください。`,
+  checklist: `このPDFを読み取り、現場で使えるチェックリストにしてください。
+以下の形式で整理してください。
+1. 作業前チェック
+2. 作業中チェック
+3. 作業後チェック
+4. 安全確認
+5. 見落としやすいポイント
+6. 異常時に確認すること
+各項目はチェックボックス形式で出してください。`,
+  glossary: `このPDFを読み取り、初心者がつまずきそうな専門用語を抽出してください。
+以下の形式で整理してください。
+1. 用語
+2. 意味
+3. 現場での使われ方
+4. 関連する注意点
+5. 似ている用語との違い
+できるだけ分かりやすく説明してください。`,
+  caution: `このPDFを読み取り、現場で注意すべき点を抜き出してください。
+以下の観点で整理してください。
+1. 安全面の注意
+2. 操作上の注意
+3. 設定・条件の注意
+4. トラブルにつながりやすい点
+5. 初心者が誤解しやすい点
+6. 実務で確認すべきこと
+重要度が高いものから順に並べてください。`,
+  training: `このPDFを読み取り、新人教育用の資料に変換してください。
+以下の形式で整理してください。
+1. この資料で学ぶ目的
+2. 最初に覚えるべきこと
+3. 重要ポイント
+4. 現場での使い方
+5. つまずきやすい点
+6. 確認問題
+7. 理解度チェック
+初心者向けに、順番に学べる構成にしてください。`,
+  social: `このPDFを読み取り、SNS投稿に使える学びや気づきを抽出してください。
+以下の形式で整理してください。
+1. 投稿ネタになりそうなポイント
+2. 現場経験とつなげられる視点
+3. 初心者にも伝わる一文
+4. 誤解されやすい点
+5. X投稿案
+6. Threads投稿案
+機密情報や固有名詞は出さず、一般化して使える表現にしてください。`,
+  imagePrompt: `このPDFを読み取り、内容を初心者向けに説明する図解画像のプロンプトを作ってください。
+以下の形式で整理してください。
+1. 図解のテーマ
+2. 画像に入れる要素
+3. 配置イメージ
+4. 文字として入れる内容
+5. 避けるべき表現
+6. 画像生成用プロンプト
+専門的すぎる表現は避け、ひと目で流れが分かる図解にしてください。`
+};
+
+const audienceTemplates = {
+  self: "自分が後から見返して理解できるように、要点を整理してください。",
+  beginner: "初心者でも理解できるように、専門用語をかみ砕いて説明してください。",
+  newEmployee: "新人教育で使えるように、基礎から順番に理解できる構成にしてください。",
+  fieldWorker: "現場で確認しながら使えるように、実務上の注意点や確認項目を重視してください。",
+  customer: "お客さんに説明しても違和感がないように、専門的すぎる表現を避けて整理してください。",
+  snsReader: "SNSで読まれることを前提に、分かりやすく短い表現で整理してください。"
+};
+
+const outputFormatTemplates = {
+  bullet: "出力は箇条書きで、見出しごとに整理してください。",
+  table: "出力は表形式で整理してください。",
+  steps: "出力は手順形式で、実行する順番が分かるようにしてください。",
+  checklist: "出力はチェックボックス付きのチェックリスト形式にしてください。",
+  explanation: "出力は自然な説明文にしてください。",
+  post: "出力はSNS投稿として使える文章にしてください。",
+  imagePrompt: "出力は画像生成AIにそのまま渡せるプロンプト形式にしてください。"
+};
+
+const optionTemplates = {
+  explainTerms: "・専門用語はかみ砕いて説明してください。",
+  fieldPractical: "・現場でそのまま確認しやすい形にしてください。",
+  priorityOrder: "・重要度が高いものから順に並べてください。",
+  separateFactAndAssumption: "・PDFに書かれている事実と、推測や補足は分けてください。",
+  noUnsupportedClaims: "・PDFに書かれていない内容は断定せず、「要確認」としてください。",
+  avoidConfidentialInfo: "・機密情報や固有名詞は必要以上に出さず、可能な範囲で一般化してください。",
+  includeCommonMistakes: "・作業者がミスしやすい点も補足してください。",
+  includeBeginnerPitfalls: "・初心者がつまずきやすい点も補足してください。"
+};
+
 let saveStateTimer = null;
 let restoringState = false;
 
@@ -60,6 +174,7 @@ const els = {
   homeView: document.getElementById("homeView"),
   cameraView: document.getElementById("cameraView"),
   pagesView: document.getElementById("pagesView"),
+  promptView: document.getElementById("promptView"),
   cameraDeviceNotice: document.getElementById("cameraDeviceNotice"),
   secureWarning: document.getElementById("secureWarning"),
   selectImagesHome: document.getElementById("selectImagesHome"),
@@ -82,17 +197,36 @@ const els = {
   pdfName: document.getElementById("pdfName"),
   createPdf: document.getElementById("createPdf"),
   sharePdf: document.getElementById("sharePdf"),
-  pdfStatus: document.getElementById("pdfStatus")
+  pdfStatus: document.getElementById("pdfStatus"),
+  pdfCompletion: document.getElementById("pdfCompletion"),
+  openPromptInterview: document.getElementById("openPromptInterview"),
+  backToPages: document.getElementById("backToPages"),
+  promptInterviewForm: document.getElementById("promptInterviewForm"),
+  promptOptions: document.getElementById("promptOptions"),
+  freeTextInput: document.getElementById("freeTextInput"),
+  promptInterviewError: document.getElementById("promptInterviewError"),
+  generatedPromptArea: document.getElementById("generatedPromptArea"),
+  generatedPromptText: document.getElementById("generatedPromptText"),
+  copyPromptButton: document.getElementById("copyPromptButton"),
+  editPromptButton: document.getElementById("editPromptButton"),
+  restartPromptButton: document.getElementById("restartPromptButton"),
+  promptCopyStatus: document.getElementById("promptCopyStatus")
 };
 
 function setView(viewName) {
   els.homeView.classList.toggle("view-active", viewName === "home");
   els.cameraView.classList.toggle("view-active", viewName === "camera");
   els.pagesView.classList.toggle("view-active", viewName === "pages");
+  els.promptView.classList.toggle("view-active", viewName === "prompt");
 
   if (viewName === "pages") {
     renderPages();
   }
+}
+
+function setPromptAvailability(available) {
+  pdfReadyForPrompt = Boolean(available);
+  els.pdfCompletion.hidden = !pdfReadyForPrompt;
 }
 
 function setNotice(message) {
@@ -480,6 +614,8 @@ async function createPdfFromPages() {
   try {
     await saveAppState();
     const { blob, fileName } = await generatePdfBlob();
+    setPromptAvailability(true);
+    await saveAppState();
     markRestoreAfterPdfPreview();
     downloadBlob(blob, fileName);
     setPdfStatus("PDFを保存しました。保存したファイルを共有できます。");
@@ -507,6 +643,8 @@ async function sharePdfFromPages() {
   try {
     await saveAppState();
     const { blob, fileName } = await generatePdfBlob();
+    setPromptAvailability(true);
+    await saveAppState();
 
     if (typeof File === "function") {
       const file = new File([blob], fileName, { type: "application/pdf" });
@@ -515,7 +653,7 @@ async function sharePdfFromPages() {
         await navigator.share({
           files: [file],
           title: fileName,
-          text: "Book Scan PDFで作成したPDFです。"
+          text: "Paper to AIで作成したPDFです。"
         });
         setPdfStatus("共有を開きました。");
         return;
@@ -596,6 +734,7 @@ async function saveAppState() {
     nextPageId,
     pdfName: els.pdfName.value,
     pdfLayout: getPdfLayout(),
+    pdfReadyForPrompt,
     pages: pages.map((page) => ({
       id: page.id,
       blob: page.blob,
@@ -644,6 +783,7 @@ async function restoreAppState() {
     }
 
     setPdfLayout(state.pdfLayout);
+    setPromptAvailability(state.pdfReadyForPrompt === true);
 
     if (!Array.isArray(state.pages) || state.pages.length === 0) {
       updateCounts();
@@ -739,6 +879,189 @@ async function clearSavedAppState() {
   } catch (error) {
     // A fresh app launch should not fail because cleanup was unavailable.
   }
+}
+
+function openPromptInterviewView() {
+  if (!pdfReadyForPrompt) {
+    setPdfStatus("先にPDFを作成してください。", true);
+    setView("pages");
+    return;
+  }
+
+  setView("prompt");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function handlePromptChoice(event) {
+  const button = event.target.closest(".choice-button");
+
+  if (!button) {
+    return;
+  }
+
+  const group = button.closest(".choice-grid");
+  const question = group?.dataset.question;
+
+  if (!question || !(question in promptInterviewState)) {
+    return;
+  }
+
+  promptInterviewState[question] = button.dataset.value || "";
+
+  group.querySelectorAll(".choice-button").forEach((choice) => {
+    const selected = choice === button;
+
+    choice.classList.toggle("selected", selected);
+    choice.setAttribute("aria-pressed", String(selected));
+  });
+
+  els.promptInterviewError.textContent = "";
+}
+
+function syncPromptOptions() {
+  promptInterviewState.options = Array.from(
+    els.promptOptions.querySelectorAll('input[type="checkbox"]:checked'),
+    (input) => input.value
+  );
+  promptInterviewState.freeText = els.freeTextInput.value.trim();
+}
+
+function validatePromptInterview() {
+  const required = [
+    {
+      key: "purpose",
+      groupId: "purposeGroup",
+      message: "PDFをAIで何に使いたいか選択してください。"
+    },
+    {
+      key: "audience",
+      groupId: "audienceGroup",
+      message: "誰向けに整理するか選択してください。"
+    },
+    {
+      key: "outputFormat",
+      groupId: "outputFormatGroup",
+      message: "出力形式を選択してください。"
+    }
+  ];
+
+  for (const item of required) {
+    if (promptInterviewState[item.key]) {
+      continue;
+    }
+
+    els.promptInterviewError.textContent = item.message;
+    document.getElementById(item.groupId)?.querySelector(".choice-button")?.focus();
+    return false;
+  }
+
+  els.promptInterviewError.textContent = "";
+  return true;
+}
+
+function generateAiPrompt(state) {
+  const purposeText = purposeTemplates[state.purpose] || "";
+  const audienceText = audienceTemplates[state.audience] || "";
+  const outputFormatText = outputFormatTemplates[state.outputFormat] || "";
+  const optionTexts = state.options
+    .map((option) => optionTemplates[option])
+    .filter(Boolean);
+  const sections = [
+    purposeText,
+    "",
+    "対象：",
+    audienceText,
+    "",
+    "出力形式：",
+    outputFormatText,
+    "",
+    "条件：",
+    optionTexts.length > 0 ? optionTexts.join("\n") : "・追加条件はありません。"
+  ];
+
+  if (state.freeText) {
+    sections.push("", "追加で伝えたいこと：", state.freeText);
+  }
+
+  return sections.join("\n").trim();
+}
+
+function handlePromptGeneration(event) {
+  event.preventDefault();
+  syncPromptOptions();
+
+  if (!validatePromptInterview()) {
+    return;
+  }
+
+  els.generatedPromptText.value = generateAiPrompt(promptInterviewState);
+  els.generatedPromptText.readOnly = true;
+  els.generatedPromptArea.hidden = false;
+  els.promptCopyStatus.textContent = "";
+  els.generatedPromptArea.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function copyGeneratedPrompt() {
+  const promptText = els.generatedPromptText.value.trim();
+
+  if (!promptText) {
+    els.promptCopyStatus.textContent = "先にAI依頼文を生成してください。";
+    return;
+  }
+
+  try {
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(promptText);
+    } else {
+      const selectionStart = els.generatedPromptText.selectionStart;
+      const selectionEnd = els.generatedPromptText.selectionEnd;
+
+      els.generatedPromptText.select();
+
+      if (!document.execCommand("copy")) {
+        throw new Error("Copy command failed");
+      }
+
+      els.generatedPromptText.setSelectionRange(selectionStart, selectionEnd);
+    }
+
+    els.promptCopyStatus.textContent = "AI依頼文をコピーしました。";
+  } catch (error) {
+    els.promptCopyStatus.textContent = "コピーに失敗しました。手動で選択してコピーしてください。";
+  }
+}
+
+function editGeneratedPrompt() {
+  els.generatedPromptText.readOnly = false;
+  els.generatedPromptText.focus();
+  els.generatedPromptText.setSelectionRange(
+    els.generatedPromptText.value.length,
+    els.generatedPromptText.value.length
+  );
+  els.promptCopyStatus.textContent = "依頼文を編集できます。";
+}
+
+function resetPromptInterview() {
+  promptInterviewState.purpose = "";
+  promptInterviewState.audience = "";
+  promptInterviewState.outputFormat = "";
+  promptInterviewState.options = [];
+  promptInterviewState.freeText = "";
+
+  document.querySelectorAll(".choice-button").forEach((button) => {
+    button.classList.remove("selected");
+    button.setAttribute("aria-pressed", "false");
+  });
+  els.promptOptions.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+    input.checked = false;
+  });
+  els.freeTextInput.value = "";
+  els.generatedPromptText.value = "";
+  els.generatedPromptText.readOnly = true;
+  els.generatedPromptArea.hidden = true;
+  els.promptInterviewError.textContent = "";
+  els.promptCopyStatus.textContent = "";
+  els.promptInterviewForm.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function openAppStateDb() {
@@ -1650,7 +1973,7 @@ function serializePdf(objects) {
     offset += bytes.length;
   }
 
-  push("%PDF-1.4\n%Book Scan PDF\n");
+  push("%PDF-1.4\n%Paper to AI\n");
 
   for (const id of ids) {
     offsets[id] = offset;
@@ -1726,7 +2049,7 @@ function fitRect(sourceWidth, sourceHeight, targetWidth, targetHeight) {
 }
 
 function normalizePdfName(value) {
-  const baseName = (value || "book-scan").trim() || "book-scan";
+  const baseName = (value || "paper-to-ai").trim() || "paper-to-ai";
   const cleanName = baseName.replace(/[\\/:*?"<>|]+/g, "-");
 
   return cleanName.toLowerCase().endsWith(".pdf") ? cleanName : `${cleanName}.pdf`;
@@ -1779,6 +2102,13 @@ function bindEvents() {
   els.backHome.addEventListener("click", () => setView("home"));
   els.createPdf.addEventListener("click", createPdfFromPages);
   els.sharePdf.addEventListener("click", sharePdfFromPages);
+  els.openPromptInterview.addEventListener("click", openPromptInterviewView);
+  els.backToPages.addEventListener("click", () => setView("pages"));
+  els.promptInterviewForm.addEventListener("click", handlePromptChoice);
+  els.promptInterviewForm.addEventListener("submit", handlePromptGeneration);
+  els.copyPromptButton.addEventListener("click", copyGeneratedPrompt);
+  els.editPromptButton.addEventListener("click", editGeneratedPrompt);
+  els.restartPromptButton.addEventListener("click", resetPromptInterview);
   els.pdfName.addEventListener("input", scheduleSaveAppState);
   document.querySelectorAll('input[name="pdfLayout"]').forEach((input) => {
     input.addEventListener("change", scheduleSaveAppState);

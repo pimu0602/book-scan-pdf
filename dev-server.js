@@ -40,5 +40,5 @@ const server = http.createServer((request, response) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`Book Scan PDF: http://${host}:${port}`);
+  console.log(`Paper to AI: http://${host}:${port}`);
 });

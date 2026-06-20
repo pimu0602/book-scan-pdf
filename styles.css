@@ -33,7 +33,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -81,7 +82,7 @@ p {
 
 h1 {
   margin-bottom: 6px;
-  font-size: clamp(2rem, 8vw, 4.25rem);
+  font-size: 2.4rem;
   line-height: 1.02;
 }
 
@@ -214,7 +215,9 @@ h2 {
 
 .button:focus-visible,
 .text-button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+textarea:focus-visible,
+.choice-button:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
@@ -476,6 +479,149 @@ input:focus-visible {
   font-weight: 700;
 }
 
+.pdf-completion {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-top: 6px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.pdf-completion p {
+  margin: 0;
+}
+
+.pdf-completion[hidden],
+.prompt-result[hidden] {
+  display: none;
+}
+
+.prompt-workspace {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 28px;
+}
+
+.prompt-form {
+  min-width: 0;
+}
+
+.interview-group {
+  min-width: 0;
+  margin: 0 0 28px;
+  padding: 0;
+  border: 0;
+}
+
+.interview-group legend,
+.interview-group > label {
+  display: block;
+  margin-bottom: 12px;
+  padding: 0;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.choice-grid,
+.option-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.choice-button {
+  min-height: 50px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px 12px;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 700;
+  text-align: left;
+}
+
+.choice-button:hover {
+  border-color: var(--secondary);
+}
+
+.choice-button.selected {
+  border-color: var(--primary);
+  background: #e8f4ef;
+  box-shadow: inset 4px 0 0 var(--primary);
+  color: var(--primary-dark);
+}
+
+.option-grid label {
+  display: flex;
+  min-height: 48px;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-weight: 700;
+}
+
+.option-grid input {
+  flex: 0 0 auto;
+  width: 19px;
+  height: 19px;
+  margin-top: 2px;
+  accent-color: var(--primary);
+}
+
+#freeTextInput,
+#generatedPromptText {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface);
+  color: var(--text);
+  line-height: 1.65;
+  resize: vertical;
+}
+
+#generatedPromptText[readonly] {
+  background: var(--surface-strong);
+}
+
+.prompt-primary-action {
+  width: 100%;
+}
+
+.prompt-result {
+  min-width: 0;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.prompt-result h3 {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+}
+
+.prompt-result-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.prompt-message {
+  min-height: 1.5em;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.prompt-error {
+  color: var(--danger);
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -530,6 +676,20 @@ input:focus-visible {
   .pdf-layout-options legend {
     grid-column: 1 / -1;
   }
+
+  .pdf-completion {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .choice-grid,
+  .option-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .prompt-result-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (min-width: 920px) {
@@ -549,6 +709,28 @@ input:focus-visible {
 
   .page-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  h1 {
+    font-size: 3.5rem;
+  }
+
+  .prompt-workspace {
+    grid-template-columns: minmax(0, 1.2fr) minmax(340px, 0.8fr);
+    gap: 36px;
+    align-items: start;
+  }
+
+  .choice-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .prompt-result {
+    position: sticky;
+    top: 18px;
+    padding: 0 0 0 28px;
+    border-top: 0;
+    border-left: 1px solid var(--line);
   }
 }
 
