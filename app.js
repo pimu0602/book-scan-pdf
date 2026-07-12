@@ -688,9 +688,19 @@ function bindEvents() {
   els.createPdf.addEventListener("click", createPdfFromPages);
   els.sharePdf.addEventListener("click", sharePdfFromPages);
 
-  window.addEventListener("beforeunload", () => {
+  window.addEventListener("beforeunload", (event) => {
+    // 撮影・選択した画像はメモリ上にしかないため、残っている間は離脱を確認する
+    if (pages.length > 0) {
+      event.preventDefault();
+      event.returnValue = "";
+      return;
+    }
     stopCamera();
     pages.forEach((page) => URL.revokeObjectURL(page.url));
+  });
+
+  window.addEventListener("pagehide", () => {
+    stopCamera();
   });
 
   window.addEventListener("resize", updateCameraAvailability);
